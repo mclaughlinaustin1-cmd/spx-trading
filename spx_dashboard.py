@@ -3,18 +3,21 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime
-from streamlit_autorefresh import st_autorefresh  # Make sure to install: pip install streamlit-autorefresh
-
-# ---------------------------------------------------------
-# Auto-refresh every 30 seconds
-# ---------------------------------------------------------
-count = st_autorefresh(interval=30_000, limit=None, key="auto_refresh")
+import time
 
 # ---------------------------------------------------------
 # Page Setup
 # ---------------------------------------------------------
 st.set_page_config(page_title="SPX Live Trade Signals", layout="wide")
 st.title("📊 SPX Live Intraday Trade Signal Engine (15-Min Horizon)")
+
+# ---------------------------------------------------------
+# Auto-refresh: Refresh every 30 seconds
+# ---------------------------------------------------------
+refresh_interval = 30  # seconds
+st.write(f"Auto-refresh every {refresh_interval} seconds")
+time.sleep(refresh_interval)
+st.experimental_rerun()  # reruns the whole app
 
 # ---------------------------------------------------------
 # Load Market Data
