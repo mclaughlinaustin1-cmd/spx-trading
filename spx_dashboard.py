@@ -94,6 +94,22 @@ def update_trades(latest_price, current_time):
                 trades.at[idx, "Exit Time"] = current_time
                 trades.at[idx, "P&L"] = row["Entry"] - row["Stop"]
 
+def get_time_window(df, time_range):
+    if time_range == "6M":
+        return df.tail(6*21*26)  # approx 6 months, 21 trading days per month, 26 15-min bars per day
+    elif time_range == "3M":
+        return df.tail(3*21*26)
+    elif time_range == "1M":
+        return df.tail(21*26)
+    elif time_range == "2W":
+        return df.tail(10*26)
+    elif time_range == "1W":
+        return df.tail(5*26)
+    elif time_range == "24H":
+        return df.tail(26)
+    else:
+        return df.tail(100)
+
 # --- MAIN LOOP ---
 while True:
     with placeholder.container():
@@ -104,31 +120,29 @@ while True:
             time.sleep(refresh_interval)
             continue
 
-        if time_range == "2W": spy_daily = spy_daily.tail(14)
-        elif time_range == "1W": spy_daily = spy_daily.tail(7)
-        elif time_range == "24H": spy_daily = spy_daily.tail(1)
-
         spy = simulate_15min(spy_daily)
         spy = spy.dropna(subset=["Close"])
-        spy = spy.tail(100)
+        spy = spy.tail(500)  # keep last 500 bars max
 
+        # EMA & ATR
         spy["EMA_9"] = spy["Close"].ewm(span=9, adjust=False).mean()
         spy["EMA_21"] = spy["Close"].ewm(span=21, adjust=False).mean()
         spy["ATR"] = spy["Close"].diff().abs().rolling(14).mean()
 
+        # Latest values
         latest_price = float(spy["Close"].iloc[-1])
         ema_fast = float(spy["EMA_9"].iloc[-1])
         ema_slow = float(spy["EMA_21"].iloc[-1])
         atr = float(spy["ATR"].iloc[-1]) if pd.notna(spy["ATR"].iloc[-1]) else 0.0
         recent_return = (latest_price - float(spy["Close"].iloc[-2])) / float(spy["Close"].iloc[-2])
 
+        # Signal
         signal, confidence, do_not_trade = calculate_signal(latest_price, ema_fast, ema_slow, recent_return, atr)
 
-        # --- Safe check for last trade ---
+        # Execute trade if last trade closed
         last_trade_closed = True
         if isinstance(st.session_state.trades, pd.DataFrame) and not st.session_state.trades.empty:
             last_trade_closed = pd.notna(st.session_state.trades.iloc[-1]["Exit Price"])
-
         if not do_not_trade and last_trade_closed:
             execute_trade(signal, latest_price, atr, spy.index[-1])
 
@@ -142,20 +156,21 @@ while True:
         c3.metric("Confidence", confidence)
         c4.metric("ATR", f"{atr:.4f}")
 
-        # P&L
+        # P&L Table
         st.subheader("Paper P&L")
         trades_display = st.session_state.trades.copy()
         trades_display["P&L"] = trades_display["P&L"].fillna("Open")
         st.dataframe(trades_display)
 
-        # Plot chart
+        # --- PLOTLY CHART ---
+        spy_window = get_time_window(spy, time_range)
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=spy.index, y=spy["Close"], mode="lines+markers", name="Close"))
+        fig.add_trace(go.Scatter(x=spy_window.index, y=spy_window["Close"], mode="lines+markers", name="Close"))
         if show_ema:
-            fig.add_trace(go.Scatter(x=spy.index, y=spy["EMA_9"], mode="lines", name="EMA 9"))
-            fig.add_trace(go.Scatter(x=spy.index, y=spy["EMA_21"], mode="lines", name="EMA 21"))
+            fig.add_trace(go.Scatter(x=spy_window.index, y=spy_window["EMA_9"], mode="lines", name="EMA 9"))
+            fig.add_trace(go.Scatter(x=spy_window.index, y=spy_window["EMA_21"], mode="lines", name="EMA 21"))
 
-        # Add entry/exit markers
+        # Entry/Exit markers
         for _, t in trades_display.iterrows():
             if pd.notna(t["Entry"]):
                 fig.add_trace(go.Scatter(
@@ -172,9 +187,11 @@ while True:
                     text=[f"P&L: {t['P&L']}"], textposition="bottom center", name="Exit"
                 ))
 
-        fig.update_layout(title=f"SPY Simulated 15-Min Close + EMA ({time_range} View)",
-                          xaxis_title="Time", yaxis_title="Price", height=600, hovermode="x unified")
-        st.plotly_chart(fig, use_container_width=True)
-        st.caption(f"Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        fig.update_layout(
+            title=f"SPY Simulated 15-Min Close + EMA ({time_range} View)",
+            xaxis_title="Time",
+            yaxis_title="Price",
+            height=600,
+            hovermode="x unified",
+            xaxis=dict(rangeslide
 
-    time.sleep(refresh_interval)
