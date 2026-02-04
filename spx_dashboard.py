@@ -133,4 +133,3 @@ for _ in range(1000):
         st.caption(f"Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     time.sleep(refresh_interval)
-
