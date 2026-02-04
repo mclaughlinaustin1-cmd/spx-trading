@@ -16,21 +16,25 @@ for _ in range(1000):
         # Fetch last 2 days of 15-min candles
         spx = yf.download("^GSPC", period="2d", interval="15m", progress=False)
 
-        # Ensure spx is a DataFrame and not empty
+        # Ensure spx is a DataFrame
         if spx is None or not isinstance(spx, pd.DataFrame) or spx.empty:
             st.warning("No data returned from yfinance. Waiting for next refresh...")
             time.sleep(refresh_interval)
             continue
 
-        # Ensure the necessary columns exist
-        expected_cols = ["Open", "High", "Low", "Close", "Volume"]
-        if not all(col in spx.columns for col in expected_cols):
-            st.warning("Data incomplete, waiting for next refresh...")
+        # Flatten MultiIndex columns if present
+        if isinstance(spx.columns, pd.MultiIndex):
+            spx.columns = [col[1] if col[1] else col[0] for col in spx.columns]
+
+        # Ensure required columns exist
+        required_cols = ["Open", "High", "Low", "Close", "Volume"]
+        if not all(col in spx.columns for col in required_cols):
+            st.warning("Missing required columns. Waiting for next refresh...")
             time.sleep(refresh_interval)
             continue
 
-        # Ensure numeric and drop rows with NaN in Close
-        spx = spx[expected_cols].apply(pd.to_numeric, errors='coerce')
+        # Keep only required columns and convert to numeric
+        spx = spx[required_cols].apply(pd.to_numeric, errors='coerce')
         spx = spx.dropna(subset=['Close'])
 
         if len(spx) < 5:
@@ -129,3 +133,4 @@ for _ in range(1000):
         st.caption(f"Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     time.sleep(refresh_interval)
+
