@@ -15,6 +15,11 @@ for _ in range(1000):
     with placeholder.container():
         # Fetch last 2 days of 15-min candles
         spx = yf.download("^GSPC", period="2d", interval="15m", progress=False)
+
+        # Ensure numeric columns and drop rows with NaNs in Close
+        spx = spx.apply(pd.to_numeric, errors='coerce')
+        spx = spx.dropna(subset=['Close'])
+
         if spx.empty or len(spx) < 5:
             st.warning("Not enough data yet. Waiting for next refresh...")
             time.sleep(refresh_interval)
@@ -22,28 +27,21 @@ for _ in range(1000):
 
         spx = spx.tail(5)
 
-        # Calculate indicators
+        # Indicators
         spx["EMA_9"] = spx["Close"].ewm(span=9, adjust=False).mean()
         spx["EMA_21"] = spx["Close"].ewm(span=21, adjust=False).mean()
         spx["ATR"] = (spx["High"] - spx["Low"]).rolling(14).mean()
 
-        # Safely get latest values
-        latest_price = spx["Close"].iat[-1]
-        latest_price = float(latest_price) if pd.notna(latest_price) else 0.0
-
-        ema_fast = spx["EMA_9"].iat[-1]
-        ema_fast = float(ema_fast) if pd.notna(ema_fast) else 0.0
-
-        ema_slow = spx["EMA_21"].iat[-1]
-        ema_slow = float(ema_slow) if pd.notna(ema_slow) else 0.0
-
-        atr = spx["ATR"].iat[-1]
-        atr = float(atr) if pd.notna(atr) else 0.0
+        # Safely get latest scalar values
+        latest_price = float(spx["Close"].iloc[-1])
+        ema_fast = float(spx["EMA_9"].iloc[-1])
+        ema_slow = float(spx["EMA_21"].iloc[-1])
+        atr = float(spx["ATR"].iloc[-1]) if pd.notna(spx["ATR"].iloc[-1]) else 0.0
 
         # Trade signal logic
         do_not_trade = False
         do_not_trade_reason = ""
-        recent_return = (latest_price - spx["Close"].iat[-2]) / spx["Close"].iat[-2]
+        recent_return = (latest_price - float(spx["Close"].iloc[-2])) / float(spx["Close"].iloc[-2])
 
         if atr / latest_price > 0.008:
             do_not_trade = True
@@ -117,6 +115,5 @@ for _ in range(1000):
         st.plotly_chart(fig, use_container_width=True)
         st.caption(f"Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    # Wait before refreshing
     time.sleep(refresh_interval)
 
