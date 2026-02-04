@@ -16,12 +16,23 @@ for _ in range(1000):
         # Fetch last 2 days of 15-min candles
         spx = yf.download("^GSPC", period="2d", interval="15m", progress=False)
 
-        # Ensure numeric columns and drop rows with NaNs in Close
+        # Ensure the necessary columns exist
+        expected_cols = ["Open", "High", "Low", "Close", "Volume"]
+        spx_cols = [col.strip() for col in spx.columns]  # remove extra spaces
+        if not all(col in spx_cols for col in expected_cols):
+            st.warning("Data incomplete, waiting for next refresh...")
+            time.sleep(refresh_interval)
+            continue
+
+        # Rename columns to standard names (in case of spaces or different formatting)
+        spx.columns = expected_cols
+
+        # Ensure numeric and drop rows with NaN in Close
         spx = spx.apply(pd.to_numeric, errors='coerce')
         spx = spx.dropna(subset=['Close'])
 
         if spx.empty or len(spx) < 5:
-            st.warning("Not enough data yet. Waiting for next refresh...")
+            st.warning("Not enough valid data yet. Waiting for next refresh...")
             time.sleep(refresh_interval)
             continue
 
@@ -116,4 +127,3 @@ for _ in range(1000):
         st.caption(f"Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     time.sleep(refresh_interval)
-
