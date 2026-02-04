@@ -16,13 +16,20 @@ def simulate_15min(df):
     """Split daily OHLC into 15-min pseudo bars (26 bars per day)"""
     all_bars = []
     for _, row in df.iterrows():
-        o, h, l, c = row["Open"], row["High"], row["Low"], row["Close"]
-        bar_open = np.linspace(o, c, 26)  # linear open -> close
+        o, h, l, c = float(row["Open"]), float(row["High"]), float(row["Low"]), float(row["Close"])
+        bar_open = np.linspace(o, c, 26)
         bar_high = np.linspace(o, h, 26)
         bar_low = np.linspace(o, l, 26)
-        bar_close = bar_open + np.random.uniform(-0.1, 0.1, 26)  # small noise
+        noise = np.random.uniform(-0.1, 0.1, 26)
+        bar_close = (bar_open + noise).flatten()  # ensure 1D
+
         times = pd.date_range(start=row.name, periods=26, freq="15T")
-        day_bars = pd.DataFrame({"Open": bar_open, "High": bar_high, "Low": bar_low, "Close": bar_close}, index=times)
+        day_bars = pd.DataFrame({
+            "Open": bar_open.flatten(),
+            "High": bar_high.flatten(),
+            "Low": bar_low.flatten(),
+            "Close": bar_close
+        }, index=times)
         all_bars.append(day_bars)
     return pd.concat(all_bars)
 
