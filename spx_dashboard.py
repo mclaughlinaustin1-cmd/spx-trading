@@ -6,14 +6,14 @@ from datetime import datetime
 import time
 
 st.set_page_config(page_title="SPY 15-Min Live Dashboard", layout="wide")
-st.title("📈 SPY Live 15-Min Dashboard")
+st.title("📈 SPY 15-Min Live Dashboard")
 
 placeholder = st.empty()
 refresh_interval = 30  # seconds
 
 while True:
     with placeholder.container():
-        # Download last 7 days of 15-min SPY data (works reliably)
+        # Download last 7 days of 15-min SPY data
         spy = yf.download("SPY", period="7d", interval="15m", progress=False)
 
         if spy is None or spy.empty:
@@ -21,7 +21,20 @@ while True:
             time.sleep(refresh_interval)
             continue
 
-        spy["Close"] = pd.to_numeric(spy["Adj Close"], errors="coerce")
+        # Flatten MultiIndex if present
+        if isinstance(spy.columns, pd.MultiIndex):
+            spy.columns = [col[1] if col[1] else col[0] for col in spy.columns]
+
+        # Use Adj Close as Close
+        if "Close" not in spy.columns and "Adj Close" in spy.columns:
+            spy.rename(columns={"Adj Close": "Close"}, inplace=True)
+
+        if "Close" not in spy.columns:
+            st.warning("No Close/Adj Close column available. Retrying...")
+            time.sleep(refresh_interval)
+            continue
+
+        spy["Close"] = pd.to_numeric(spy["Close"], errors="coerce")
         spy = spy.dropna(subset=["Close"])
 
         if len(spy) < 5:
@@ -31,7 +44,7 @@ while True:
 
         spy = spy.tail(5)  # Last 5 bars
 
-        # EMA
+        # Indicators
         spy["EMA_9"] = spy["Close"].ewm(span=9, adjust=False).mean()
         spy["EMA_21"] = spy["Close"].ewm(span=21, adjust=False).mean()
         spy["ATR"] = spy["Close"].diff().abs().rolling(14).mean()
