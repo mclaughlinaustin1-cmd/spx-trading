@@ -5,53 +5,50 @@ import plotly.graph_objects as go
 from datetime import datetime
 import time
 
-# -------------------------------
-# Page setup
-# -------------------------------
 st.set_page_config(page_title="SPX 15-Min Live Dashboard", layout="wide")
 st.title("📈 SPX Live 15-Min Candles Dashboard")
 
-# Placeholder for live updating content
 placeholder = st.empty()
 refresh_interval = 30  # seconds
 
-# Loop for live updates
 for _ in range(1000):
     with placeholder.container():
-        # -------------------------------
-        # Load last 5 15-min candles
-        # -------------------------------
+        # Fetch last 2 days of 15-min candles
         spx = yf.download("^GSPC", period="2d", interval="15m", progress=False)
-        if spx.empty:
-            st.warning("Data unavailable. Try again shortly.")
+        if spx.empty or len(spx) < 5:
+            st.warning("Not enough data yet. Waiting for next refresh...")
             time.sleep(refresh_interval)
             continue
 
-        spx = spx.tail(5)  # last 5 candles
+        spx = spx.tail(5)
 
-        # -------------------------------
         # Calculate indicators
-        # -------------------------------
         spx["EMA_9"] = spx["Close"].ewm(span=9, adjust=False).mean()
         spx["EMA_21"] = spx["Close"].ewm(span=21, adjust=False).mean()
         spx["ATR"] = (spx["High"] - spx["Low"]).rolling(14).mean()
 
-        # Get latest prices safely
-        latest_price = float(spx["Close"].iloc[-1]) if pd.notna(spx["Close"].iloc[-1]) else 0.0
-        ema_fast = float(spx["EMA_9"].iloc[-1]) if pd.notna(spx["EMA_9"].iloc[-1]) else 0.0
-        ema_slow = float(spx["EMA_21"].iloc[-1]) if pd.notna(spx["EMA_21"].iloc[-1]) else 0.0
-        atr = float(spx["ATR"].iloc[-1]) if pd.notna(spx["ATR"].iloc[-1]) else 0.0
+        # Safely get latest values
+        latest_price = spx["Close"].iat[-1]
+        latest_price = float(latest_price) if pd.notna(latest_price) else 0.0
 
-        # -------------------------------
+        ema_fast = spx["EMA_9"].iat[-1]
+        ema_fast = float(ema_fast) if pd.notna(ema_fast) else 0.0
+
+        ema_slow = spx["EMA_21"].iat[-1]
+        ema_slow = float(ema_slow) if pd.notna(ema_slow) else 0.0
+
+        atr = spx["ATR"].iat[-1]
+        atr = float(atr) if pd.notna(atr) else 0.0
+
         # Trade signal logic
-        # -------------------------------
         do_not_trade = False
         do_not_trade_reason = ""
-        recent_return = (latest_price - spx["Close"].iloc[-2]) / spx["Close"].iloc[-2]
+        recent_return = (latest_price - spx["Close"].iat[-2]) / spx["Close"].iat[-2]
 
         if atr / latest_price > 0.008:
             do_not_trade = True
             do_not_trade_reason = "High volatility"
+
         if abs(recent_return) < 0.0005:
             do_not_trade = True
             do_not_trade_reason = "Choppy market"
@@ -81,9 +78,7 @@ for _ in range(1000):
         target = entry + atr if "LONG" in signal else entry - atr
         invalidation = entry - atr*0.75 if "LONG" in signal else entry + atr*0.75
 
-        # -------------------------------
         # Display metrics
-        # -------------------------------
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Latest Price", f"{latest_price:.2f}")
         c2.metric("EMA 9", f"{ema_fast:.2f}")
@@ -96,9 +91,7 @@ for _ in range(1000):
         if do_not_trade:
             st.warning(f"DO NOT TRADE: {do_not_trade_reason}")
 
-        # -------------------------------
         # Candlestick chart
-        # -------------------------------
         fig = go.Figure(data=[go.Candlestick(
             x=spx.index,
             open=spx['Open'],
@@ -109,7 +102,7 @@ for _ in range(1000):
             decreasing_line_color='red',
             name="SPX"
         )])
-        # Add EMA lines
+
         fig.add_trace(go.Scatter(x=spx.index, y=spx["EMA_9"], line=dict(color='blue', width=2), name="EMA 9"))
         fig.add_trace(go.Scatter(x=spx.index, y=spx["EMA_21"], line=dict(color='orange', width=2), name="EMA 21"))
 
@@ -120,11 +113,10 @@ for _ in range(1000):
             height=500,
             margin=dict(l=20, r=20, t=40, b=20)
         )
-        st.plotly_chart(fig, use_container_width=True)
 
+        st.plotly_chart(fig, use_container_width=True)
         st.caption(f"Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    # -------------------------------
     # Wait before refreshing
-    # -------------------------------
     time.sleep(refresh_interval)
+
