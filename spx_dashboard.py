@@ -49,19 +49,18 @@ def simulate_15min(df, bars_per_day=26):
 def calculate_signal(latest_price, ema_fast, ema_slow, recent_return, atr):
     do_not_trade = False
     if atr / latest_price > 0.008 or abs(recent_return) < 0.0005:
-        return "🚫 DO NOT TRADE", "N/A", do_not_trade
+        return "🚫 DO NOT TRADE", "N/A", True
     score = 0
     score += 1 if ema_fast > ema_slow else -1
     score += 1 if recent_return > 0 else -1
-    do_not_trade = False
     if score >= 2:
-        return "LONG", "High", do_not_trade
+        return "LONG", "High", False
     elif score == 1:
-        return "LONG (Cautious)", "Medium", do_not_trade
+        return "LONG (Cautious)", "Medium", False
     elif score == -1:
-        return "SHORT (Cautious)", "Medium", do_not_trade
+        return "SHORT (Cautious)", "Medium", False
     else:
-        return "SHORT", "High", do_not_trade
+        return "SHORT", "High", False
 
 def execute_trade(signal, latest_price, atr, current_time):
     entry = latest_price
@@ -74,7 +73,7 @@ def execute_trade(signal, latest_price, atr, current_time):
 def update_trades(latest_price, current_time):
     trades = st.session_state.trades
     for idx, row in trades.iterrows():
-        if row["Exit Price"] is not None:
+        if pd.notna(row["Exit Price"]):
             continue
         if "LONG" in row["Direction"]:
             if latest_price >= row["Target"]:
@@ -125,13 +124,16 @@ while True:
 
         signal, confidence, do_not_trade = calculate_signal(latest_price, ema_fast, ema_slow, recent_return, atr)
 
-        # Execute new trade if allowed
-        current_time = spy.index[-1]
-        if not do_not_trade and (len(st.session_state.trades)==0 or st.session_state.trades.iloc[-1]["Exit Price"] is not None):
-            execute_trade(signal, latest_price, atr, current_time)
+        # --- Safe check for last trade ---
+        last_trade_closed = True
+        if not st.session_state.trades.empty:
+            last_trade_closed = pd.notna(st.session_state.trades.iloc[-1]["Exit Price"])
+
+        if not do_not_trade and last_trade_closed:
+            execute_trade(signal, latest_price, atr, spy.index[-1])
 
         # Update trades
-        update_trades(latest_price, current_time)
+        update_trades(latest_price, spy.index[-1])
 
         # Metrics
         c1, c2, c3, c4 = st.columns(4)
@@ -166,8 +168,8 @@ while True:
                 fig.add_trace(go.Scatter(
                     x=[t["Exit Time"]], y=[t["Exit Price"]],
                     mode="markers+text",
-                    marker=dict(color="gold" if t["P&L"]>0 else "black", size=12),
-                    text=[f"P&L: {t['P&L']:.2f}"], textposition="bottom center", name="Exit"
+                    marker=dict(color="gold" if isinstance(t["P&L"], (int,float)) and t["P&L"]>0 else "black", size=12),
+                    text=[f"P&L: {t['P&L']}"], textposition="bottom center", name="Exit"
                 ))
 
         fig.update_layout(title=f"SPY Simulated 15-Min Close + EMA ({time_range} View)",
