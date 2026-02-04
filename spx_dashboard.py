@@ -6,62 +6,98 @@ from datetime import datetime
 import time
 
 # -------------------------------
-# Page Setup
+# Page setup
 # -------------------------------
 st.set_page_config(page_title="SPX 15-Min Live Dashboard", layout="wide")
-st.title("📈 SPX Live 15-Min Candle Dashboard")
+st.title("📈 SPX Live 15-Min Candles Dashboard")
 
-# -------------------------------
-# Placeholder for live update
-# -------------------------------
+# Placeholder for live updating content
 placeholder = st.empty()
 refresh_interval = 30  # seconds
 
-# -------------------------------
-# Live update loop
-# -------------------------------
-for _ in range(1000):  # prevent infinite loop issues
+# Loop for live updates
+for _ in range(1000):
     with placeholder.container():
         # -------------------------------
-        # Load last 2 15-min candles
+        # Load last 5 15-min candles
         # -------------------------------
         spx = yf.download("^GSPC", period="2d", interval="15m", progress=False)
         if spx.empty:
             st.warning("Data unavailable. Try again shortly.")
+            time.sleep(refresh_interval)
             continue
-        spx = spx.tail(2)  # only last 2 candles
+
+        spx = spx.tail(5)  # last 5 candles
 
         # -------------------------------
-        # Indicators
+        # Calculate indicators
         # -------------------------------
         spx["EMA_9"] = spx["Close"].ewm(span=9, adjust=False).mean()
         spx["EMA_21"] = spx["Close"].ewm(span=21, adjust=False).mean()
+        spx["ATR"] = (spx["High"] - spx["Low"]).rolling(14).mean()
 
-        latest_price = spx["Close"].iloc[-1]
-        ema_fast = spx["EMA_9"].iloc[-1]
-        ema_slow = spx["EMA_21"].iloc[-1]
+        # Get latest prices safely
+        latest_price = float(spx["Close"].iloc[-1]) if pd.notna(spx["Close"].iloc[-1]) else 0.0
+        ema_fast = float(spx["EMA_9"].iloc[-1]) if pd.notna(spx["EMA_9"].iloc[-1]) else 0.0
+        ema_slow = float(spx["EMA_21"].iloc[-1]) if pd.notna(spx["EMA_21"].iloc[-1]) else 0.0
+        atr = float(spx["ATR"].iloc[-1]) if pd.notna(spx["ATR"].iloc[-1]) else 0.0
 
         # -------------------------------
-        # Simple trade signal
+        # Trade signal logic
         # -------------------------------
-        if ema_fast > ema_slow:
+        do_not_trade = False
+        do_not_trade_reason = ""
+        recent_return = (latest_price - spx["Close"].iloc[-2]) / spx["Close"].iloc[-2]
+
+        if atr / latest_price > 0.008:
+            do_not_trade = True
+            do_not_trade_reason = "High volatility"
+        if abs(recent_return) < 0.0005:
+            do_not_trade = True
+            do_not_trade_reason = "Choppy market"
+
+        score = 0
+        score += 1 if ema_fast > ema_slow else -1
+        score += 1 if recent_return > 0 else -1
+
+        if do_not_trade:
+            signal = "🚫 DO NOT TRADE"
+            confidence = "N/A"
+        elif score >= 2:
             signal = "🟢 LONG"
-        elif ema_fast < ema_slow:
-            signal = "🔴 SHORT"
+            confidence = "High"
+        elif score == 1:
+            signal = "🟡 LONG (Cautious)"
+            confidence = "Medium"
+        elif score == -1:
+            signal = "🟠 SHORT (Cautious)"
+            confidence = "Medium"
         else:
-            signal = "⚪ NEUTRAL"
+            signal = "🔴 SHORT"
+            confidence = "High"
+
+        # Entry / Target / Invalidation
+        entry = latest_price
+        target = entry + atr if "LONG" in signal else entry - atr
+        invalidation = entry - atr*0.75 if "LONG" in signal else entry + atr*0.75
 
         # -------------------------------
-        # Metrics display
+        # Display metrics
         # -------------------------------
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Latest Price", f"{latest_price:.2f}")
         c2.metric("EMA 9", f"{ema_fast:.2f}")
         c3.metric("EMA 21", f"{ema_slow:.2f}")
-        st.subheader(f"Trade Signal: {signal}")
+        c4.metric("Signal", signal)
+        c5.metric("Confidence", confidence)
+
+        st.subheader("Trade Levels (15-Min Horizon)")
+        st.markdown(f"- Entry: {entry:.2f}\n- Target: {target:.2f}\n- Invalidation: {invalidation:.2f}")
+        if do_not_trade:
+            st.warning(f"DO NOT TRADE: {do_not_trade_reason}")
 
         # -------------------------------
-        # Candlestick chart of last 2 candles
+        # Candlestick chart
         # -------------------------------
         fig = go.Figure(data=[go.Candlestick(
             x=spx.index,
@@ -73,21 +109,22 @@ for _ in range(1000):  # prevent infinite loop issues
             decreasing_line_color='red',
             name="SPX"
         )])
-
-        # Add EMAs
+        # Add EMA lines
         fig.add_trace(go.Scatter(x=spx.index, y=spx["EMA_9"], line=dict(color='blue', width=2), name="EMA 9"))
         fig.add_trace(go.Scatter(x=spx.index, y=spx["EMA_21"], line=dict(color='orange', width=2), name="EMA 21"))
 
         fig.update_layout(
-            title="SPX 15-Min Candles (Last 2 Bars)",
+            title="SPX 15-Min Candles (Last 5 Bars)",
             xaxis_title="Time",
             yaxis_title="Price",
             height=500,
             margin=dict(l=20, r=20, t=40, b=20)
         )
-
         st.plotly_chart(fig, use_container_width=True)
+
         st.caption(f"Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    # Wait before next refresh
+    # -------------------------------
+    # Wait before refreshing
+    # -------------------------------
     time.sleep(refresh_interval)
