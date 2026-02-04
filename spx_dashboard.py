@@ -1,196 +1,74 @@
-import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
-from datetime import datetime
-import time
+from datetime import datetime, timedelta
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import r2_score
 
-st.set_page_config(page_title="SPY Paper Trading Dashboard", layout="wide")
-st.title("📈 SPY Paper Trading + 15-Min Dashboard")
+# --- 1. USER INPUT ---
+ticker = input("Enter a stock ticker (e.g., AAPL, MSFT): ").upper()
+end_date = datetime.today()
+start_date = end_date - timedelta(days=5*365)
 
-# --- SIDEBAR ---
-time_range = st.sidebar.selectbox("Select Time Range", ["6M", "3M", "1M", "2W", "1W", "24H"])
-show_ema = st.sidebar.checkbox("Show EMAs", value=True)
-refresh_interval = st.sidebar.slider("Refresh Interval (sec)", 10, 60, 30)
+# --- 2. DOWNLOAD DATA ---
+print(f"\nDownloading data for {ticker} from {start_date.date()} to {end_date.date()}...")
+data = yf.download(ticker, start=start_date, end=end_date)
 
-placeholder = st.empty()
+if data.empty:
+    print("Error: No data found for this ticker.")
+    exit()
 
-# --- PAPER TRADING DATAFRAME ---
-if "trades" not in st.session_state or not isinstance(st.session_state.trades, pd.DataFrame):
-    st.session_state.trades = pd.DataFrame(columns=[
-        "Entry Time", "Direction", "Entry", "Target", "Stop", "Exit Time", "Exit Price", "P&L"
-    ])
+# --- 3. CLEAN DATA ---
+data = data.dropna()
+data['Date'] = data.index
+data['Date_ordinal'] = pd.to_datetime(data['Date']).map(datetime.toordinal)
 
-# --- HELPER FUNCTIONS ---
-def get_period(range_str):
-    mapping = {"6M":"6mo","3M":"3mo","1M":"1mo","2W":"1mo","1W":"1mo","24H":"1mo"}
-    return mapping.get(range_str,"1mo")
+# Features and target
+X = data[['Date_ordinal']]
+y = data['Close']
 
-def simulate_15min(df, bars_per_day=26):
-    all_bars = []
-    for _, row in df.iterrows():
-        o, h, l, c = float(row["Open"]), float(row["High"]), float(row["Low"]), float(row["Close"])
-        bar_open = np.linspace(o, c, bars_per_day)
-        bar_high = np.linspace(o, h, bars_per_day)
-        bar_low = np.linspace(o, l, bars_per_day)
-        noise = np.random.uniform(-0.1, 0.1, bars_per_day)
-        bar_close = (bar_open + noise).flatten()
-        times = pd.date_range(start=row.name, periods=bars_per_day, freq="15T")
-        day_bars = pd.DataFrame({
-            "Open": bar_open.flatten(),
-            "High": bar_high.flatten(),
-            "Low": bar_low.flatten(),
-            "Close": bar_close
-        }, index=times)
-        all_bars.append(day_bars)
-    return pd.concat(all_bars)
+# --- 4. SPLIT DATA ---
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
 
-def calculate_signal(latest_price, ema_fast, ema_slow, recent_return, atr):
-    do_not_trade = False
-    if atr / latest_price > 0.008 or abs(recent_return) < 0.0005:
-        return "🚫 DO NOT TRADE", "N/A", True
-    score = 0
-    score += 1 if ema_fast > ema_slow else -1
-    score += 1 if recent_return > 0 else -1
-    if score >= 2:
-        return "LONG", "High", False
-    elif score == 1:
-        return "LONG (Cautious)", "Medium", False
-    elif score == -1:
-        return "SHORT (Cautious)", "Medium", False
-    else:
-        return "SHORT", "High", False
+# --- 5. TRAIN MODELS ---
+# Linear Regression
+lr_model = LinearRegression()
+lr_model.fit(X_train, y_train)
 
-def execute_trade(signal, latest_price, atr, current_time):
-    entry = latest_price
-    target = entry + atr if "LONG" in signal else entry - atr
-    stop = entry - atr*0.75 if "LONG" in signal else entry + atr*0.75
-    st.session_state.trades.loc[len(st.session_state.trades)] = [
-        current_time, signal, entry, target, stop, None, None, None
-    ]
+# Decision Tree Regressor
+dt_model = DecisionTreeRegressor(max_depth=5, random_state=42)
+dt_model.fit(X_train, y_train)
 
-def update_trades(latest_price, current_time):
-    trades = st.session_state.trades
-    for idx, row in trades.iterrows():
-        if pd.notna(row["Exit Price"]):
-            continue
-        if "LONG" in row["Direction"]:
-            if latest_price >= row["Target"]:
-                trades.at[idx, "Exit Price"] = row["Target"]
-                trades.at[idx, "Exit Time"] = current_time
-                trades.at[idx, "P&L"] = row["Target"] - row["Entry"]
-            elif latest_price <= row["Stop"]:
-                trades.at[idx, "Exit Price"] = row["Stop"]
-                trades.at[idx, "Exit Time"] = current_time
-                trades.at[idx, "P&L"] = row["Stop"] - row["Entry"]
-        elif "SHORT" in row["Direction"]:
-            if latest_price <= row["Target"]:
-                trades.at[idx, "Exit Price"] = row["Target"]
-                trades.at[idx, "Exit Time"] = current_time
-                trades.at[idx, "P&L"] = row["Entry"] - row["Target"]
-            elif latest_price >= row["Stop"]:
-                trades.at[idx, "Exit Price"] = row["Stop"]
-                trades.at[idx, "Exit Time"] = current_time
-                trades.at[idx, "P&L"] = row["Entry"] - row["Stop"]
+# Random Forest (Non-linear regression)
+rf_model = RandomForestRegressor(n_estimators=100, max_depth=5, random_state=42)
+rf_model.fit(X_train, y_train)
 
-def get_time_window(df, time_range):
-    if time_range == "6M":
-        return df.tail(6*21*26)
-    elif time_range == "3M":
-        return df.tail(3*21*26)
-    elif time_range == "1M":
-        return df.tail(21*26)
-    elif time_range == "2W":
-        return df.tail(10*26)
-    elif time_range == "1W":
-        return df.tail(5*26)
-    elif time_range == "24H":
-        return df.tail(26)
-    else:
-        return df.tail(100)
+# --- 6. TEST MODELS ---
+y_pred_lr = lr_model.predict(X_test)
+y_pred_dt = dt_model.predict(X_test)
+y_pred_rf = rf_model.predict(X_test)
 
-# --- MAIN LOOP ---
-while True:
-    with placeholder.container():
-        period = get_period(time_range)
-        spy_daily = yf.download("SPY", period=period, interval="1d", progress=False)
-        if spy_daily.empty:
-            st.warning("No data yet. Retrying...")
-            time.sleep(refresh_interval)
-            continue
+print("\nModel Accuracy (R² score):")
+print(f"Linear Regression:      {r2_score(y_test, y_pred_lr):.4f}")
+print(f"Decision Tree:          {r2_score(y_test, y_pred_dt):.4f}")
+print(f"Random Forest:          {r2_score(y_test, y_pred_rf):.4f}")
 
-        spy = simulate_15min(spy_daily)
-        spy = spy.dropna(subset=["Close"])
-        spy = spy.tail(500)
-
-        spy["EMA_9"] = spy["Close"].ewm(span=9, adjust=False).mean()
-        spy["EMA_21"] = spy["Close"].ewm(span=21, adjust=False).mean()
-        spy["ATR"] = spy["Close"].diff().abs().rolling(14).mean()
-
-        latest_price = float(spy["Close"].iloc[-1])
-        ema_fast = float(spy["EMA_9"].iloc[-1])
-        ema_slow = float(spy["EMA_21"].iloc[-1])
-        atr = float(spy["ATR"].iloc[-1]) if pd.notna(spy["ATR"].iloc[-1]) else 0.0
-        recent_return = (latest_price - float(spy["Close"].iloc[-2])) / float(spy["Close"].iloc[-2])
-
-        signal, confidence, do_not_trade = calculate_signal(latest_price, ema_fast, ema_slow, recent_return, atr)
-
-        last_trade_closed = True
-        if isinstance(st.session_state.trades, pd.DataFrame) and not st.session_state.trades.empty:
-            last_trade_closed = pd.notna(st.session_state.trades.iloc[-1]["Exit Price"])
-        if not do_not_trade and last_trade_closed:
-            execute_trade(signal, latest_price, atr, spy.index[-1])
-
-        update_trades(latest_price, spy.index[-1])
-
-        # Metrics
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Latest Price", f"{latest_price:.2f}")
-        c2.metric("Signal", signal)
-        c3.metric("Confidence", confidence)
-        c4.metric("ATR", f"{atr:.4f}")
-
-        # P&L Table
-        st.subheader("Paper P&L")
-        trades_display = st.session_state.trades.copy()
-        trades_display["P&L"] = trades_display["P&L"].fillna("Open")
-        st.dataframe(trades_display)
-
-        # Plotly Chart
-        spy_window = get_time_window(spy, time_range)
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=spy_window.index, y=spy_window["Close"], mode="lines+markers", name="Close"))
-        if show_ema:
-            fig.add_trace(go.Scatter(x=spy_window.index, y=spy_window["EMA_9"], mode="lines", name="EMA 9"))
-            fig.add_trace(go.Scatter(x=spy_window.index, y=spy_window["EMA_21"], mode="lines", name="EMA 21"))
-
-        for _, t in trades_display.iterrows():
-            if pd.notna(t["Entry"]):
-                fig.add_trace(go.Scatter(
-                    x=[t["Entry Time"]], y=[t["Entry"]],
-                    mode="markers+text",
-                    marker=dict(color="green" if "LONG" in t["Direction"] else "red", size=12),
-                    text=["Entry"], textposition="top center", name="Entry"
-                ))
-            if pd.notna(t["Exit Price"]):
-                fig.add_trace(go.Scatter(
-                    x=[t["Exit Time"]], y=[t["Exit Price"]],
-                    mode="markers+text",
-                    marker=dict(color="gold" if isinstance(t["P&L"], (int,float)) and t["P&L"]>0 else "black", size=12),
-                    text=[f"P&L: {t['P&L']}"], textposition="bottom center", name="Exit"
-                ))
-
-        fig.update_layout(
-            title=f"SPY Simulated 15-Min Close + EMA ({time_range} View)",
-            xaxis_title="Time",
-            yaxis_title="Price",
-            height=600,
-            hovermode="x unified",
-            xaxis=dict(rangeslider=dict(visible=True), type="date")
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
-        st.caption(f"Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-    time.sleep(refresh_interval)
+# --- 7. USER PREDICTION ---
+future_date_str = input("\nEnter a date to predict the stock price (YYYY-MM-DD): ")
+try:
+    future_date = datetime.strptime(future_date_str, "%Y-%m-%d")
+    future_ordinal = np.array([[future_date.toordinal()]])
+    
+    pred_lr = lr_model.predict(future_ordinal)[0]
+    pred_dt = dt_model.predict(future_ordinal)[0]
+    pred_rf = rf_model.predict(future_ordinal)[0]
+    
+    print(f"\nPredicted {ticker} Close Price on {future_date.date()}:")
+    print(f"Linear Regression:  ${pred_lr:.2f}")
+    print(f"Decision Tree:      ${pred_dt:.2f}")
+    print(f"Random Forest:      ${pred_rf:.2f}")
+except:
+    print("Invalid date format. Please enter as YYYY-MM-DD.")
