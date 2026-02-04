@@ -16,22 +16,24 @@ for _ in range(1000):
         # Fetch last 2 days of 15-min candles
         spx = yf.download("^GSPC", period="2d", interval="15m", progress=False)
 
+        # Ensure spx is a DataFrame and not empty
+        if spx is None or not isinstance(spx, pd.DataFrame) or spx.empty:
+            st.warning("No data returned from yfinance. Waiting for next refresh...")
+            time.sleep(refresh_interval)
+            continue
+
         # Ensure the necessary columns exist
         expected_cols = ["Open", "High", "Low", "Close", "Volume"]
-        spx_cols = [col.strip() for col in spx.columns]  # remove extra spaces
-        if not all(col in spx_cols for col in expected_cols):
+        if not all(col in spx.columns for col in expected_cols):
             st.warning("Data incomplete, waiting for next refresh...")
             time.sleep(refresh_interval)
             continue
 
-        # Rename columns to standard names (in case of spaces or different formatting)
-        spx.columns = expected_cols
-
         # Ensure numeric and drop rows with NaN in Close
-        spx = spx.apply(pd.to_numeric, errors='coerce')
+        spx = spx[expected_cols].apply(pd.to_numeric, errors='coerce')
         spx = spx.dropna(subset=['Close'])
 
-        if spx.empty or len(spx) < 5:
+        if len(spx) < 5:
             st.warning("Not enough valid data yet. Waiting for next refresh...")
             time.sleep(refresh_interval)
             continue
