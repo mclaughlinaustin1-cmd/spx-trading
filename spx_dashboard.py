@@ -17,7 +17,7 @@ refresh_interval = st.sidebar.slider("Refresh Interval (sec)", 10, 60, 30)
 placeholder = st.empty()
 
 # --- PAPER TRADING DATAFRAME ---
-if "trades" not in st.session_state:
+if "trades" not in st.session_state or not isinstance(st.session_state.trades, pd.DataFrame):
     st.session_state.trades = pd.DataFrame(columns=[
         "Entry Time", "Direction", "Entry", "Target", "Stop", "Exit Time", "Exit Price", "P&L"
     ])
@@ -126,7 +126,7 @@ while True:
 
         # --- Safe check for last trade ---
         last_trade_closed = True
-        if not st.session_state.trades.empty:
+        if isinstance(st.session_state.trades, pd.DataFrame) and not st.session_state.trades.empty:
             last_trade_closed = pd.notna(st.session_state.trades.iloc[-1]["Exit Price"])
 
         if not do_not_trade and last_trade_closed:
